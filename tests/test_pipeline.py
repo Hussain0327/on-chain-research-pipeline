@@ -88,6 +88,62 @@ class TestFeasibilityAnalyzer:
         assert at_1x_fee["annual_web2_cost"].is_monotonic_increasing
 
 
+class TestSavingsGuardrails:
+    """Regression tests: savings must never exceed Web2 annual costs."""
+
+    @pytest.mark.parametrize("payment_method", ["credit_card", "wire_transfer", "cross_border"])
+    def test_savings_never_exceed_web2_annual(self, payment_method):
+        profile = {
+            "name": "GuardTest",
+            "sector": "test",
+            "annual_revenue": 5_000_000,
+            "ebitda_margin": 0.15,
+            "monthly_transactions": 50_000,
+            "avg_transaction_value": 500,
+            "current_payment_method": payment_method,
+            "target_chain": "avalanche_usdc",
+            "use_adoption_curve": True,
+        }
+        fa = FeasibilityAnalyzer(profile)
+        ebitda = fa.calculate_ebitda_impact()
+        web2_annual = fa._monthly_web2_cost() * 12
+        assert ebitda["annual_cost_savings"] <= web2_annual
+
+    def test_savings_with_adoption_curve_less_than_without(self):
+        base = {
+            "name": "CurveTest",
+            "sector": "test",
+            "annual_revenue": 5_000_000,
+            "ebitda_margin": 0.15,
+            "monthly_transactions": 50_000,
+            "avg_transaction_value": 200,
+            "current_payment_method": "credit_card",
+            "target_chain": "polygon_usdc",
+        }
+        profile_off = {**base, "use_adoption_curve": False}
+        profile_on = {**base, "use_adoption_curve": True}
+
+        savings_off = FeasibilityAnalyzer(profile_off).calculate_ebitda_impact()["annual_cost_savings"]
+        savings_on = FeasibilityAnalyzer(profile_on).calculate_ebitda_impact()["annual_cost_savings"]
+        assert savings_on < savings_off
+
+    def test_freight_broker_savings_reasonable(self):
+        profile = {
+            "name": "Freight Broker",
+            "sector": "logistics",
+            "annual_revenue": 8_000_000,
+            "ebitda_margin": 0.10,
+            "monthly_transactions": 25_000,
+            "avg_transaction_value": 2_000,
+            "current_payment_method": "wire_transfer",
+            "target_chain": "avalanche_usdc",
+            "use_adoption_curve": True,
+        }
+        fa = FeasibilityAnalyzer(profile)
+        ebitda = fa.calculate_ebitda_impact()
+        assert ebitda["margin_expansion_bps"] < 5000
+
+
 class TestProtocolScreening:
     def test_strong_protocol_scores_high(self):
         snapshot = {

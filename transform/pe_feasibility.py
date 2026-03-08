@@ -124,7 +124,7 @@ class FeasibilityAnalyzer:
         web3_annual = sum(
             web3_full * a + web2_monthly * (1 - a) for a in adoption
         )
-        annual_savings = web2_annual - web3_annual
+        annual_savings = min(web2_annual - web3_annual, web2_annual)
 
         revenue = self.profile["annual_revenue"]
         current_margin = self.profile["ebitda_margin"]
@@ -135,7 +135,7 @@ class FeasibilityAnalyzer:
         margin_expansion_bps = (new_margin - current_margin) * 10000
 
         # PE valuation: typical 8-12x EBITDA multiple
-        ev_multiple = 10
+        ev_multiple = 8
         valuation_uplift = annual_savings * ev_multiple
 
         # Payback period

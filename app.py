@@ -267,11 +267,15 @@ def _compute_sector_savings(assumed_revenue, assumed_margin):
             "current_payment_method": arch["current_payment_method"],
             "target_chain": arch["target_chain"],
         }
+        profile["use_adoption_curve"] = True
+        profile["annual_revenue"] = assumed_revenue
+        profile["ebitda_margin"] = assumed_margin
         fa = FeasibilityAnalyzer(profile)
+        ebitda = fa.calculate_ebitda_impact()
         web2_annual = fa._monthly_web2_cost() * 12
-        web3_annual = fa._monthly_web3_cost() * 12
-        savings = web2_annual - web3_annual
-        margin_impact_bps = (savings / assumed_revenue) * 10_000
+        web3_annual = web2_annual - ebitda["annual_cost_savings"]
+        savings = ebitda["annual_cost_savings"]
+        margin_impact_bps = ebitda["margin_expansion_bps"]
 
         if savings > 500_000:
             thesis = "Strong"
@@ -440,7 +444,7 @@ with tab_business:
         m1.metric("Annual Savings", f"${ebitda['annual_cost_savings']:,.0f}")
         m2.metric("Margin Expansion", f"{ebitda['margin_expansion_bps']:.0f} bps")
         m3.metric("Payback Period", f"{ebitda['payback_months']:.1f} mo")
-        m4.metric("Valuation Uplift @8x", f"${ebitda['annual_cost_savings'] * 8:,.0f}")
+        m4.metric("Valuation Uplift @8x", f"${ebitda['valuation_uplift']:,.0f}")
 
         if compare_case:
             st.caption(f"Comparison: {CHAIN_LABELS[compare_chain]}")
@@ -452,8 +456,8 @@ with tab_business:
                        delta=f"{eb['margin_expansion_bps'] - ebitda['margin_expansion_bps']:+.0f}")
             c3.metric("Payback Period", f"{eb['payback_months']:.1f} mo",
                        delta=f"{eb['payback_months'] - ebitda['payback_months']:+.1f}", delta_color="inverse")
-            c4.metric("Valuation Uplift @8x", f"${eb['annual_cost_savings'] * 8:,.0f}",
-                       delta=f"{(eb['annual_cost_savings'] - ebitda['annual_cost_savings']) * 8:+,.0f}")
+            c4.metric("Valuation Uplift @8x", f"${eb['valuation_uplift']:,.0f}",
+                       delta=f"{eb['valuation_uplift'] - ebitda['valuation_uplift']:+,.0f}")
 
         # ---------------------------------------------------------------
         # Row 2: Cost comparison + EBITDA waterfall
