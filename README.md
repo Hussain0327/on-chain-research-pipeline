@@ -1,6 +1,6 @@
 # Inversion Capital — On-Chain Diligence Pipeline
 
-**[Live App →](https://inversion-diligence-pipeline.streamlit.app)**
+**[Live App →](https://hussain0327-on-chain-research-pipeline.streamlit.app/)**
 
 Evaluates whether stablecoin payment infrastructure is a viable value creation lever for PE acquisition targets. Pulls live on-chain data from DeFiLlama, runs cost comparison models with configurable assumptions, and outputs IC-ready tear sheets.
 
