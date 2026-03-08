@@ -1,72 +1,71 @@
 # Inversion Capital — On-Chain Diligence Pipeline
 
-ETL pipeline and Streamlit app for evaluating stablecoin payment infrastructure as a PE value creation lever. Pulls live on-chain data from DeFiLlama, translates it into PE metrics (EBITDA impact, cost savings, payback period), and outputs Investment Committee-ready tear sheets.
+**[Live App →](https://hussain0327-on-chain-research-pipeline.streamlit.app)**
 
-## Quick Start
+Evaluates whether stablecoin payment infrastructure is a viable value creation lever for PE acquisition targets. Pulls live on-chain data from DeFiLlama, runs cost comparison models with configurable assumptions, and outputs IC-ready tear sheets.
+
+Built to support thesis generation for businesses where legacy financial infrastructure suppresses margins.
+
+---
+
+## What It Does
+
+**Business Diligence** — Input a target company's financials and payment profile. The pipeline projects 12-month Web2 vs. Web3 costs, calculates EBITDA margin expansion and valuation uplift, runs sensitivity analysis across gas fee volatility and revenue growth scenarios, and compares chain ecosystem health. Includes quick scenario presets (Telecom MVNO, Freight Broker, Regional Bank), a conversion tier toggle (institutional 0.3% / blended 0.5% / retail 1.0%), and a phased rollout model that ramps adoption from 20% to 80% over 6 months. Outputs downloadable tear sheets and CSV exports.
+
+**Protocol Screening** — Scores DeFi protocols across 5 dimensions (TVL strength, revenue quality, multi-chain presence, capital efficiency, volume activity) to assess whether chain infrastructure is mature enough to support a portfolio company migration.
+
+**Market Scanner** — Precalculated savings across 6 verticals with thesis strength ratings, live stablecoin supply data with 6-month trends, and a chain comparison matrix covering transaction cost, settlement time, TVL, and stablecoin supply.
+
+---
+
+## Key Assumptions
+
+| Parameter | Default | Rationale |
+|-----------|---------|-----------|
+| Conversion tier | Blended (0.5%) | Assumes Circle Mint or OTC desk access, not retail on-ramp |
+| Adoption curve | 20% → 80% over 6 months | Phased rollout with 20% of volume permanently on legacy rails |
+| Migration cost | Tiered by revenue band | Sub-$5M: ~$96K, $5-10M: ~$160K, $10M+: ~$240K |
+| EV multiple | 8-10x EBITDA | Standard lower-middle-market range |
+| Gas fees | Live from DeFiLlama | Hardcoded fallbacks in config.py |
+
+---
+
+## Data Source
+
+All on-chain data from [DeFiLlama's free API](https://defillama.com/docs/api). No API key required.
+
+---
+
+## Run Locally
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open http://localhost:8501 in your browser.
-
-## App Tabs
-
-### Business Diligence
-Input a target company's financials and payment profile. The pipeline calculates:
-- 12-month Web2 vs Web3 cost projection
-- EBITDA margin expansion and valuation uplift
-- Sensitivity analysis across fee volatility and growth scenarios
-- Chain ecosystem health comparison
-
-Includes quick scenario presets (Telecom MVNO, Freight Broker, Regional Bank), side-by-side chain comparison, and downloadable tear sheets.
-
-### Protocol Screening
-Score DeFi protocols across 5 dimensions (TVL strength, revenue quality, multi-chain presence, capital efficiency, volume activity) against Inversion's acquisition criteria.
-
-### Market Scanner
-- **Savings by Sector** — precalculated savings for 6 verticals with thesis strength ratings
-- **Stablecoin Infrastructure Dashboard** — live supply data, 6-month trends
-- **Chain Comparison Matrix** — tx cost, settlement time, TVL, stablecoin supply across chains
-
-## CLI
+## Tests
 
 ```bash
-# Full business diligence with tear sheet
-python pipeline.py --mode business --name "TargetCo" --revenue 5000000 \
-  --ebitda-margin 0.15 --monthly-tx 50000 --avg-tx-value 60 \
-  --payment-method credit_card --target-chain avalanche_usdc
-
-# Protocol screening
-python pipeline.py --mode protocol --slugs aave-v3,lido,sky-lending
+python -m pytest tests/
 ```
+
+---
 
 ## Project Structure
 
 ```
 ├── app.py                  # Streamlit app (primary deliverable)
 ├── pipeline.py             # CLI entry point
-├── config.py               # Cost benchmarks, API URLs, migration costs
+├── config.py               # Cost benchmarks, conversion tiers, migration costs
 ├── extract/
 │   ├── defillama_client.py # DeFiLlama API client (retry, cache, rate limit)
-│   └── stablecoin_metrics.py # Higher-level stablecoin analytics
+│   └── stablecoin_metrics.py
 ├── transform/
 │   ├── pe_feasibility.py   # Cost comparison, EBITDA impact, sensitivity
 │   └── screening.py        # Protocol scoring, business case generation
 ├── load/
-│   ├── csv_export.py       # CSV export functions
+│   ├── csv_export.py
 │   └── tearsheet.py        # Plotly tear sheet generator
 └── tests/
     └── test_pipeline.py    # Unit tests (pure math, no API calls)
-```
-
-## Data Source
-
-All on-chain data comes from [DeFiLlama's free API](https://defillama.com/docs/api) — no API key required.
-
-## Tests
-
-```bash
-python -m pytest tests/
 ```
