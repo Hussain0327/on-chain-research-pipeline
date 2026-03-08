@@ -12,3 +12,5 @@ output/
 *.png
 *.html
 .DS_Store
+.vscode/
+.streamlit/secrets.toml

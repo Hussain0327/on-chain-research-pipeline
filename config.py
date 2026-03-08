@@ -43,45 +43,60 @@ WEB3_COSTS = {
     "ethereum_usdc": {
         "avg_gas_fee": 3.50,  # avg gas cost per transfer in USD
         "bridge_fee_rate": 0.001,  # 0.1% for bridging
-        "onramp_fee_rate": 0.015,  # 1.5% fiat on-ramp
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 50000,  # one-time audit cost
         "monthly_infra": 300,  # node/RPC provider
     },
     "polygon_usdc": {
         "avg_gas_fee": 0.01,
         "bridge_fee_rate": 0.001,
-        "onramp_fee_rate": 0.015,
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 50000,
         "monthly_infra": 200,
     },
     "arbitrum_usdc": {
         "avg_gas_fee": 0.10,
         "bridge_fee_rate": 0.001,
-        "onramp_fee_rate": 0.015,
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 50000,
         "monthly_infra": 250,
     },
     "avalanche_usdc": {
         "avg_gas_fee": 0.05,
         "bridge_fee_rate": 0.001,
-        "onramp_fee_rate": 0.015,
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 40000,
         "monthly_infra": 200,
     },
     "solana_usdc": {
         "avg_gas_fee": 0.005,
         "bridge_fee_rate": 0.002,
-        "onramp_fee_rate": 0.015,
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 45000,
         "monthly_infra": 250,
     },
     "base_usdc": {
         "avg_gas_fee": 0.02,
         "bridge_fee_rate": 0.001,
-        "onramp_fee_rate": 0.015,
+        "treasury_conversion_rate": 0.005,  # 0.5% blended default — see CONVERSION_TIERS
         "smart_contract_audit": 40000,
         "monthly_infra": 200,
     },
+}
+
+# Conversion tier rates (override treasury_conversion_rate per profile)
+CONVERSION_TIERS = {
+    "institutional": {"rate": 0.003, "label": "Institutional (Circle Mint direct)"},
+    "blended": {"rate": 0.005, "label": "Blended (ramp-up period)"},
+    "retail": {"rate": 0.010, "label": "Retail (third-party on-ramp)"},
+}
+
+# Default phased adoption schedule
+DEFAULT_ADOPTION_SCHEDULE = {
+    "month_1_pct": 0.20,
+    "ramp_end_month": 6,
+    "ramp_end_pct": 0.80,
+    "steady_state_pct": 0.80,
 }
 
 # One-time migration costs

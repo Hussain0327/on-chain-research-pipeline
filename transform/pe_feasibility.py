@@ -4,7 +4,7 @@ PE feasibility analysis: Web2 vs Web3 cost comparison, EBITDA impact, sensitivit
 
 import pandas as pd
 
-from config import WEB2_COSTS, WEB3_COSTS, MIGRATION_COSTS
+from config import WEB2_COSTS, WEB3_COSTS, MIGRATION_COSTS, CONVERSION_TIERS, DEFAULT_ADOPTION_SCHEDULE
 
 
 class FeasibilityAnalyzer:
@@ -36,16 +36,46 @@ class FeasibilityAnalyzer:
         monthly_tx = self.profile["monthly_transactions"]
         avg_value = self.profile["avg_transaction_value"]
 
+        tier = self.profile.get("conversion_tier")
+        if tier and tier in CONVERSION_TIERS:
+            conversion_rate = CONVERSION_TIERS[tier]["rate"]
+        else:
+            conversion_rate = costs["treasury_conversion_rate"]
+
         gas = monthly_tx * costs["avg_gas_fee"]
-        onramp = monthly_tx * avg_value * costs["onramp_fee_rate"]
+        onramp = monthly_tx * avg_value * conversion_rate
         infra = costs["monthly_infra"]
 
         return gas + onramp + infra
 
+    def _get_adoption_schedule(self, months=12):
+        """Per-month adoption fractions. Returns [1.0]*months when curve is off."""
+        if not self.profile.get("use_adoption_curve", False):
+            return [1.0] * months
+
+        sched = DEFAULT_ADOPTION_SCHEDULE
+        m1 = sched["month_1_pct"]
+        ramp_end = sched["ramp_end_month"]
+        ramp_pct = sched["ramp_end_pct"]
+        steady = sched["steady_state_pct"]
+
+        result = []
+        for m in range(1, months + 1):
+            if m == 1:
+                result.append(m1)
+            elif m <= ramp_end:
+                # linear ramp from m1 at month 1 to ramp_pct at ramp_end
+                result.append(m1 + (ramp_pct - m1) * (m - 1) / (ramp_end - 1))
+            else:
+                result.append(steady)
+        return result
+
     def calculate_cost_comparison(self, months=12):
         """12-month Web2 vs Web3 cost projection DataFrame."""
         web2_monthly = self._monthly_web2_cost()
-        web3_monthly = self._monthly_web3_cost()
+        web3_full = self._monthly_web3_cost()
+        adoption = self._get_adoption_schedule(months)
+        use_curve = self.profile.get("use_adoption_curve", False)
 
         chain = self.profile["target_chain"]
         chain_costs = WEB3_COSTS.get(chain, WEB3_COSTS["polygon_usdc"])
@@ -62,26 +92,38 @@ class FeasibilityAnalyzer:
         web2_cumulative = 0
         web3_cumulative = migration_total  # upfront migration cost
 
-        for month in range(1, months + 1):
-            web2_cumulative += web2_monthly
-            web3_cumulative += web3_monthly
+        for i, month in enumerate(range(1, months + 1)):
+            adopt_pct = adoption[i]
+            blended = web3_full * adopt_pct + web2_monthly * (1 - adopt_pct)
 
-            rows.append({
+            web2_cumulative += web2_monthly
+            web3_cumulative += blended
+
+            row = {
                 "month": month,
                 "web2_monthly": round(web2_monthly, 2),
-                "web3_monthly": round(web3_monthly, 2),
+                "web3_monthly": round(blended, 2),
                 "web2_cumulative": round(web2_cumulative, 2),
                 "web3_cumulative": round(web3_cumulative, 2),
-                "monthly_savings": round(web2_monthly - web3_monthly, 2),
+                "monthly_savings": round(web2_monthly - blended, 2),
                 "cumulative_savings": round(web2_cumulative - web3_cumulative, 2),
-            })
+            }
+            if use_curve:
+                row["adoption_pct"] = round(adopt_pct, 4)
+            rows.append(row)
 
         return pd.DataFrame(rows)
 
     def calculate_ebitda_impact(self):
         """EBITDA margin expansion, valuation uplift, payback period."""
-        web2_annual = self._monthly_web2_cost() * 12
-        web3_annual = self._monthly_web3_cost() * 12
+        web2_monthly = self._monthly_web2_cost()
+        web3_full = self._monthly_web3_cost()
+        adoption = self._get_adoption_schedule(12)
+
+        web2_annual = web2_monthly * 12
+        web3_annual = sum(
+            web3_full * a + web2_monthly * (1 - a) for a in adoption
+        )
         annual_savings = web2_annual - web3_annual
 
         revenue = self.profile["annual_revenue"]
@@ -133,19 +175,24 @@ class FeasibilityAnalyzer:
 
         base_web2 = self._monthly_web2_cost()
         base_web3 = self._monthly_web3_cost()
+        adoption = self._get_adoption_schedule(12)
 
         rows = []
         for fee_mult in fee_multipliers:
             for growth in growth_rates:
                 adjusted_web3 = base_web3 * fee_mult
                 adjusted_web2 = base_web2 * (1 + growth)  # growth increases tx volume -> costs
-                annual_savings = (adjusted_web2 - adjusted_web3) * 12
+                annual_web3 = sum(
+                    adjusted_web3 * a + adjusted_web2 * (1 - a) for a in adoption
+                )
+                annual_web2 = adjusted_web2 * 12
+                annual_savings = annual_web2 - annual_web3
 
                 rows.append({
                     "fee_multiplier": fee_mult,
                     "growth_rate": growth,
-                    "annual_web2_cost": round(adjusted_web2 * 12, 2),
-                    "annual_web3_cost": round(adjusted_web3 * 12, 2),
+                    "annual_web2_cost": round(annual_web2, 2),
+                    "annual_web3_cost": round(annual_web3, 2),
                     "annual_savings": round(annual_savings, 2),
                     "savings_positive": annual_savings > 0,
                 })

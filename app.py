@@ -6,11 +6,12 @@ import io
 import zipfile
 from datetime import datetime
 
+import requests
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
 
-from config import WEB2_COSTS, WEB3_COSTS
+from config import WEB2_COSTS, WEB3_COSTS, CONVERSION_TIERS
 from extract.defillama_client import DeFiLlamaClient
 from transform.pe_feasibility import FeasibilityAnalyzer
 from transform.screening import (
@@ -49,6 +50,8 @@ CHAIN_LABELS = {
     "solana_usdc": "USDC on Solana (~$0.005/tx)",
     "base_usdc": "USDC on Base (~$0.02/tx)",
 }
+
+TIER_LABELS = {k: v["label"] for k, v in CONVERSION_TIERS.items()}
 
 # ---------------------------------------------------------------------------
 # Sector archetypes for Market Scanner
@@ -250,6 +253,53 @@ def _chart_layout(**overrides):
     return base
 
 
+@st.cache_data
+def _compute_sector_savings(assumed_revenue, assumed_margin):
+    sector_rows = []
+    for arch in SECTOR_ARCHETYPES:
+        profile = {
+            "name": arch["sector"],
+            "sector": arch["sector"],
+            "annual_revenue": assumed_revenue,
+            "ebitda_margin": assumed_margin,
+            "monthly_transactions": arch["monthly_transactions"],
+            "avg_transaction_value": arch["avg_transaction_value"],
+            "current_payment_method": arch["current_payment_method"],
+            "target_chain": arch["target_chain"],
+        }
+        fa = FeasibilityAnalyzer(profile)
+        web2_annual = fa._monthly_web2_cost() * 12
+        web3_annual = fa._monthly_web3_cost() * 12
+        savings = web2_annual - web3_annual
+        margin_impact_bps = (savings / assumed_revenue) * 10_000
+
+        if savings > 500_000:
+            thesis = "Strong"
+        elif savings > 100_000:
+            thesis = "Moderate"
+        else:
+            thesis = "Weak"
+
+        sector_rows.append({
+            "Sector": arch["sector"],
+            "Monthly Tx": f"{arch['monthly_transactions']:,}",
+            "Avg Tx ($)": f"${arch['avg_transaction_value']:,.0f}",
+            "Payment": PAYMENT_LABELS.get(arch["current_payment_method"], arch["current_payment_method"]),
+            "Target Chain": CHAIN_LABELS.get(arch["target_chain"], arch["target_chain"]).split("(")[0].strip(),
+            "Annual Web2 Cost": web2_annual,
+            "Annual Web3 Cost": web3_annual,
+            "Annual Savings": savings,
+            "Margin Impact (bps)": round(margin_impact_bps, 0),
+            "Thesis Strength": thesis,
+            "_monthly_tx": arch["monthly_transactions"],
+            "_avg_tx": arch["avg_transaction_value"],
+            "_payment": arch["current_payment_method"],
+            "_chain": arch["target_chain"],
+        })
+
+    return pd.DataFrame(sector_rows).sort_values("Annual Savings", ascending=False)
+
+
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
@@ -323,6 +373,19 @@ with tab_business:
             format_func=lambda k: CHAIN_LABELS[k],
         )
 
+    # --- Conversion tier & phased rollout ---
+    col_e, col_f = st.columns(2)
+    with col_e:
+        tier_keys = list(TIER_LABELS.keys())
+        conversion_tier = st.selectbox(
+            "Conversion Tier",
+            tier_keys,
+            index=tier_keys.index("blended"),
+            format_func=lambda k: TIER_LABELS[k],
+        )
+    with col_f:
+        use_adoption_curve = st.toggle("Phased Rollout", value=False)
+
     # --- Compare Chains toggle ---
     compare_chains = st.toggle("Compare Chains (side-by-side)")
     compare_chain = None
@@ -347,16 +410,22 @@ with tab_business:
             "avg_transaction_value": avg_tx,
             "current_payment_method": payment_method,
             "target_chain": target_chain,
+            "conversion_tier": conversion_tier,
+            "use_adoption_curve": use_adoption_curve,
         }
 
         with st.spinner("Fetching on-chain data & running analysis..."):
-            client = DeFiLlamaClient()
-            case = generate_traditional_business_case(profile, client)
+            try:
+                client = DeFiLlamaClient()
+                case = generate_traditional_business_case(profile, client)
 
-            compare_case = None
-            if compare_chains and compare_chain:
-                profile_b = {**profile, "target_chain": compare_chain}
-                compare_case = generate_traditional_business_case(profile_b, client)
+                compare_case = None
+                if compare_chains and compare_chain:
+                    profile_b = {**profile, "target_chain": compare_chain}
+                    compare_case = generate_traditional_business_case(profile_b, client)
+            except (requests.RequestException, Exception):
+                st.error("Unable to reach DeFiLlama. Please try again in a few minutes.")
+                st.stop()
 
         ebitda = case["ebitda_impact"]
         cost_df = case["cost_comparison"]
@@ -413,10 +482,26 @@ with tab_business:
                     name=f"Web3 ({CHAIN_LABELS[compare_chain].split('(')[0].strip()})",
                     line=dict(color=GOLD_LIGHT, width=3, dash="dash"),
                 ))
-            fig_cost.update_layout(**_chart_layout(
+            layout_kw = _chart_layout(
                 title="12-Month Cumulative Cost Comparison",
                 xaxis_title="Month", yaxis_title="Cumulative Cost ($)",
-            ))
+            )
+            if use_adoption_curve and "adoption_pct" in cost_df.columns:
+                fig_cost.add_trace(go.Scatter(
+                    x=cost_df["month"],
+                    y=cost_df["adoption_pct"] * 100,
+                    name="Adoption %",
+                    line=dict(color=GOLD_LIGHT, width=2, dash="dot"),
+                    yaxis="y2",
+                ))
+                layout_kw["yaxis2"] = dict(
+                    title="Adoption %",
+                    overlaying="y",
+                    side="right",
+                    range=[0, 100],
+                    gridcolor=GRID,
+                )
+            fig_cost.update_layout(**layout_kw)
             st.plotly_chart(fig_cost, use_container_width=True)
 
         with right2:
@@ -597,8 +682,12 @@ with tab_screening:
     if st.button("Screen Protocols", type="primary"):
         slugs = [s.strip() for s in slugs_input.split(",") if s.strip()]
         with st.spinner(f"Screening {len(slugs)} protocols..."):
-            client = DeFiLlamaClient()
-            results = screen_multiple_protocols(slugs, client)
+            try:
+                client = DeFiLlamaClient()
+                results = screen_multiple_protocols(slugs, client)
+            except (requests.RequestException, Exception):
+                st.error("Unable to reach DeFiLlama. Please try again in a few minutes.")
+                st.stop()
 
         rows = []
         for r in results:
@@ -646,50 +735,7 @@ with tab_scanner:
     _assumed_revenue = 5_000_000
     _assumed_margin = 0.15
 
-    sector_rows = []
-    for arch in SECTOR_ARCHETYPES:
-        profile = {
-            "name": arch["sector"],
-            "sector": arch["sector"],
-            "annual_revenue": _assumed_revenue,
-            "ebitda_margin": _assumed_margin,
-            "monthly_transactions": arch["monthly_transactions"],
-            "avg_transaction_value": arch["avg_transaction_value"],
-            "current_payment_method": arch["current_payment_method"],
-            "target_chain": arch["target_chain"],
-        }
-        fa = FeasibilityAnalyzer(profile)
-        web2_annual = fa._monthly_web2_cost() * 12
-        web3_annual = fa._monthly_web3_cost() * 12
-        savings = web2_annual - web3_annual
-        margin_impact_bps = (savings / _assumed_revenue) * 10_000
-
-        if savings > 500_000:
-            thesis = "Strong"
-        elif savings > 100_000:
-            thesis = "Moderate"
-        else:
-            thesis = "Weak"
-
-        sector_rows.append({
-            "Sector": arch["sector"],
-            "Monthly Tx": f"{arch['monthly_transactions']:,}",
-            "Avg Tx ($)": f"${arch['avg_transaction_value']:,.0f}",
-            "Payment": PAYMENT_LABELS.get(arch["current_payment_method"], arch["current_payment_method"]),
-            "Target Chain": CHAIN_LABELS.get(arch["target_chain"], arch["target_chain"]).split("(")[0].strip(),
-            "Annual Web2 Cost": web2_annual,
-            "Annual Web3 Cost": web3_annual,
-            "Annual Savings": savings,
-            "Margin Impact (bps)": round(margin_impact_bps, 0),
-            "Thesis Strength": thesis,
-            # hidden fields for click-to-fill
-            "_monthly_tx": arch["monthly_transactions"],
-            "_avg_tx": arch["avg_transaction_value"],
-            "_payment": arch["current_payment_method"],
-            "_chain": arch["target_chain"],
-        })
-
-    sector_df = pd.DataFrame(sector_rows).sort_values("Annual Savings", ascending=False)
+    sector_df = _compute_sector_savings(_assumed_revenue, _assumed_margin)
 
     display_cols = [
         "Sector", "Monthly Tx", "Avg Tx ($)", "Payment", "Target Chain",
@@ -750,15 +796,19 @@ with tab_scanner:
 
     if st.button("Load Live Data", type="primary", key="scanner_load"):
         with st.spinner("Pulling stablecoin data from DeFiLlama..."):
-            from extract.stablecoin_metrics import StablecoinInfraMetrics
-            client = DeFiLlamaClient()
-            metrics = StablecoinInfraMetrics(client)
+            try:
+                from extract.stablecoin_metrics import StablecoinInfraMetrics
+                client = DeFiLlamaClient()
+                metrics = StablecoinInfraMetrics(client)
 
-            supply_by_chain = metrics.get_stablecoin_supply_by_chain()
+                supply_by_chain = metrics.get_stablecoin_supply_by_chain()
 
-            # Supply trend for USDT (id=1) and USDC (id=2)
-            trend_usdt = metrics.get_stablecoin_supply_trend(stablecoin_id=1, days=180)
-            trend_usdc = metrics.get_stablecoin_supply_trend(stablecoin_id=2, days=180)
+                # Supply trend for USDT (id=1) and USDC (id=2)
+                trend_usdt = metrics.get_stablecoin_supply_trend(stablecoin_id=1, days=180)
+                trend_usdc = metrics.get_stablecoin_supply_trend(stablecoin_id=2, days=180)
+            except (requests.RequestException, Exception):
+                st.error("Unable to reach DeFiLlama. Please try again in a few minutes.")
+                st.stop()
 
         # --- Top 5 chains by stablecoin supply ---
         top_chains = ["Ethereum", "Tron", "Arbitrum", "Solana", "Avalanche", "Base"]
@@ -844,25 +894,29 @@ with tab_scanner:
 
     if st.button("Load Chain Matrix", type="primary", key="scanner_chain_matrix"):
         with st.spinner("Fetching chain data..."):
-            from extract.stablecoin_metrics import StablecoinInfraMetrics
-            client = DeFiLlamaClient()
-            metrics = StablecoinInfraMetrics(client)
+            try:
+                from extract.stablecoin_metrics import StablecoinInfraMetrics
+                client = DeFiLlamaClient()
+                metrics = StablecoinInfraMetrics(client)
 
-            all_chains_raw = client.get_chains()
-            supply_by_chain = metrics.get_stablecoin_supply_by_chain()
+                all_chains_raw = client.get_chains()
+                supply_by_chain = metrics.get_stablecoin_supply_by_chain()
 
-            # 30-day supply growth: compare current supply to supply 30 days ago
-            supply_trend_30d = {}
-            for chain_name in CHAIN_META:
-                try:
-                    chain_stables = client.get_stablecoin_chains()
-                    for entry in chain_stables:
-                        if entry.get("name") == chain_name:
-                            current = entry.get("totalCirculatingUSD", {}).get("peggedUSD", 0)
-                            supply_trend_30d[chain_name] = current
-                            break
-                except Exception:
-                    pass
+                # 30-day supply growth: compare current supply to supply 30 days ago
+                supply_trend_30d = {}
+                for chain_name in CHAIN_META:
+                    try:
+                        chain_stables = client.get_stablecoin_chains()
+                        for entry in chain_stables:
+                            if entry.get("name") == chain_name:
+                                current = entry.get("totalCirculatingUSD", {}).get("peggedUSD", 0)
+                                supply_trend_30d[chain_name] = current
+                                break
+                    except Exception:
+                        pass
+            except (requests.RequestException, Exception):
+                st.error("Unable to reach DeFiLlama. Please try again in a few minutes.")
+                st.stop()
 
         chain_tvl_map = {c.get("name", ""): c for c in all_chains_raw}
         if not supply_by_chain.empty:
